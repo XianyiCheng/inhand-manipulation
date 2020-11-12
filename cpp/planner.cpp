@@ -106,7 +106,7 @@ static void plannerRRT(double object_position_range[6], double finger_workspace[
 	*planlength = 0;
     
     // tunable parameters
-    double goal_thr = PI*3/180;
+    double goal_thr = PI*1/180;
     double goal_biased_prob = 0.7;
     double primitive1_prob = 0.5;
     double epsilon_translation = 1;
@@ -216,9 +216,14 @@ void mexFunction( int nlhs, mxArray *plhs[],
     double* finger_workspace = mxGetPr(WORKSPACE_IN);
     double* surface = mxGetPr(SURFACE_IN);
     double* start_object_config = mxGetPr(OBJECT_START_IN);
-    int* start_finger = (int*)mxGetPr(FINGER_START_IN);
+    double* start_finger_d = mxGetPr(FINGER_START_IN);
     double*	goal_object_config = mxGetPr(OBJECT_GOAL_IN);
     int planner_id = (int)*mxGetPr(PLANNERIN_IN);
+
+    int start_finger[NUM_FINGERS];
+    for (int i = 0; i<NUM_FINGERS; i++){
+        start_finger[i] = int(start_finger_d[i]) - 1;
+    }
 
     //call the planner
     double** object_path = NULL;
@@ -242,7 +247,7 @@ void mexFunction( int nlhs, mxArray *plhs[],
     if(planlength > 0)
     {
         OBJECTPATH_OUT = mxCreateNumericMatrix( (mwSize)planlength, (mwSize)7, mxDOUBLE_CLASS, mxREAL); 
-        FINGERPATH_OUT = mxCreateNumericMatrix( (mwSize)planlength, (mwSize)NUM_FINGERS, mxINT8_CLASS, mxREAL);
+        FINGERPATH_OUT = mxCreateNumericMatrix( (mwSize)planlength, (mwSize)NUM_FINGERS, mxDOUBLE_CLASS, mxREAL);
         double* object_out = mxGetPr(OBJECTPATH_OUT);   
         double* finger_out = mxGetPr(FINGERPATH_OUT);      
         //copy the values
@@ -254,16 +259,16 @@ void mexFunction( int nlhs, mxArray *plhs[],
             }
             for (int j = 0; j < NUM_FINGERS; j++)
             {
-                finger_out[j*planlength + i] = finger_path[i][j];
+                finger_out[j*planlength + i] = double(finger_path[i][j])+1;
             }
         }
     }
     else
     {
         OBJECTPATH_OUT = mxCreateNumericMatrix( (mwSize)1, (mwSize)7, mxDOUBLE_CLASS, mxREAL); 
-        FINGERPATH_OUT = mxCreateNumericMatrix( (mwSize)1, (mwSize)NUM_FINGERS, mxINT8_CLASS, mxREAL);
+        FINGERPATH_OUT = mxCreateNumericMatrix( (mwSize)1, (mwSize)NUM_FINGERS, mxDOUBLE_CLASS, mxREAL);
         double* object_out = mxGetPr(OBJECTPATH_OUT);   
-        int* finger_out = (int*)mxGetPr(FINGERPATH_OUT);      
+        double* finger_out = mxGetPr(FINGERPATH_OUT);      
         //copy the values
 
         for (int j = 0; j < 7; j++)
@@ -272,7 +277,7 @@ void mexFunction( int nlhs, mxArray *plhs[],
         }
         for (int j = 0; j < NUM_FINGERS; j++)
         {
-            finger_out[j] = start_finger[j];
+            finger_out[j] = double(start_finger[j])+1;
         }
         
     }

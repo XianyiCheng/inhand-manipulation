@@ -10,9 +10,9 @@ using namespace Eigen;
 
 Vector3d sample_position(const Vector3d &ub, const Vector3d &lb){
     
-    double t = randd();
+    Vector3d t(randd(),randd(),randd());
     Vector3d q;
-    q = t*(ub - lb) + lb;
+    q = t.cwiseProduct(ub - lb) + lb;
     return q;
 }
 

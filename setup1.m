@@ -5,12 +5,12 @@ HH = 1; % half height of the object
 
 posrange = [-0.5,-0.5,-0.5,0.5,0.5,0.5];
 
-ws = [-0.5,-0.5,-1.5;0.5,0.5,1.5];
+ws = [-0.4,-0.4,-1.5;0.4,0.4,1.5];
 ws1 = ws + [HW,0,0];
 ws2 = ws + [-HW,0,0];
 ws3 = ws + [0,HW,0];
 ws4 = ws + [0,-HW,0];
-workspace = [ws1(:);ws2(:);ws3(:);ws4(:)]';
+workspace = [ws1;ws2;ws3;ws4];
 
 nd = 4 + 1;
 normals = [0,1,0;-1,0,0;0,-1,0;1,0,0;0,0,1;0,0,-1];
@@ -21,7 +21,8 @@ for k = 1:6
     idx = find(n==0);
     nidx = find(n~=0);
     dd = dim(n==0);
-    [XX,YY] = meshgrid(dd(1)/nd:dd(1)/nd:(dd(1)-dd(1)/nd), dd(2)/nd:dd(2)/nd:(dd(2)-dd(2)/nd));
+    [XX,YY] = meshgrid(-(dd(1)-dd(1)/(0.5*nd)):dd(1)/(0.5*nd):(dd(1)-dd(1)/(0.5*nd)),...
+        -(dd(2)-dd(2)/(0.5*nd)):dd(2)/(0.5*nd):(dd(2)-dd(2)/(0.5*nd)));
     DD = zeros(numel(XX),6);
     DD(:,idx) = [XX(:),YY(:)];
     DD(:,nidx) = -n(nidx)*dim(nidx);
@@ -29,7 +30,7 @@ for k = 1:6
     surface = [surface; DD];
 end
 
-start_finger = [7,23,39,58];
+start_finger = [7,23,43,54];
 
 start_obj = [0,0,0,1,0,0,0];
 goal_obj = [0,0,0,0,1,0,0];

@@ -1,4 +1,9 @@
 setup1;
 
+workspace_T = workspace';
+surface_T = surface';
 [object_path, finger_path, pathlength, treesize] = ...
-    planner(posrange, workspace ,surface', start_obj, goal_obj, start_finger, plannerid);
+    planner(posrange, workspace(:) ,surface(:), start_obj, start_finger, goal_obj, plannerid);
+
+object_path(1,:) = start_obj;
+plot_animation(HL, HW, HH, workspace, surface, object_path, finger_path);
