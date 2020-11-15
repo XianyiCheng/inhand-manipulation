@@ -23,6 +23,8 @@
 #define	PLANLENGTH_OUT	plhs[2]
 #define	TREESIZE_OUT	plhs[3]
 
+#define FRICTION_COEFF 0.8
+
 void to_config(double config[7], Vector3d p, Quaterniond q){
     config[0] = p[0];
     config[1] = p[1];
@@ -38,7 +40,7 @@ bool force_closure(Vector3d p, Quaterniond q, int* finger_locations, double* obj
     return true;
 }
 
-bool in_fingertip_workspace(Vector3d p, Quaterniond q, double* finger_position, double workspace[6]){
+bool in_fingertip_workspace(Vector3d p, Quaterniond q, int finger_location, double finger_workspace[NUM_FINGERS*6], double* object_surface_discretization){
     return true;
 }
 
