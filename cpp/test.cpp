@@ -53,6 +53,28 @@ void test_contact_jacobian(){
     std::cout << adgco << std::endl;
 }
 
+void test_lp(){
+    printf("test linear programming GLPK: \n");
+    
+    VectorXd C(2);
+    C(0) = -0.6;
+    C(1) = -0.5;
+    MatrixXd A(2,2);
+    A << 1,2,3,1;
+    VectorXd b(2);
+    b << 1,2;
+    MatrixXd Ae;
+    VectorXd be;
+    VectorXd xl;
+    VectorXd xu;
+    VectorXd xs(2); 
+    double optimal_cost;
+    bool result;
+    result = lp(C, A, b, Ae, be, xl, xu, &xs, &optimal_cost);
+    std::cout << "Result: " << result << ", optimal cost: " << optimal_cost << ", solution: " << xs(0) << "," << xs(1) << std::endl;
+    return;
+}
+
 int main(){
     set_rand_seed();
     test_uniform_quaternion();
@@ -60,4 +82,5 @@ int main(){
     test_steer_position();
     test_steer_orientation();
     test_contact_jacobian();
+    test_lp();
 }

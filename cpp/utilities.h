@@ -344,4 +344,30 @@ double angBTVec(Eigen::Vector3d x, Eigen::Vector3d b,
 Matrix6d JacobianSpt2BodyV(const Matrix3d &R);
 
 
+/**
+ * Linear programming.
+ *   min C'x
+ *   s.t. Ax <= b
+ *        Ae x == be
+ *        xl <= x <= xu
+ * Elements of xl and xu can be inf or NaN to indicate no constraint. Only
+ * when isfinite() return true would the bound be considered.
+ *
+ * @param[in]  C             cost to be minimized
+ * @param[in]  A             Inequality constraints, can be empty
+ * @param[in]  b
+ * @param[in]  Ae            Equality constraints, can be empty
+ * @param[in]  be
+ * @param[in]  xl            Lower bound of variable, can be empty.
+ * @param[in]  xu            Upper bound of variable, can be empty.
+ * @param      xs            Stores the solution
+ * @param      optimal_cost  The optimal cost
+ *
+ * @return     True if the problem is feasible
+ */
+bool lp(const Eigen::VectorXd &C, const Eigen::MatrixXd &A, const Eigen::VectorXd &b,
+    const Eigen::MatrixXd &Ae, const Eigen::VectorXd &be,
+    const Eigen::VectorXd &xl, const Eigen::VectorXd &xu, Eigen::VectorXd *xs,
+    double *optimal_cost);
+
 #endif // _MATH_ULTILITIES_H_
