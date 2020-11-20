@@ -25,6 +25,7 @@
 #define	TREESIZE_OUT	plhs[3]
 #define FRICTION_COEFF 0.8
 
+int num_surface_points = 64;
 // tunable parameters
 double goal_thr = PI*1/180;
 double goal_biased_prob = 0.7;
@@ -50,7 +51,7 @@ bool force_closure(Vector3d p, Quaterniond q, int* finger_locations, double* obj
     return true;
 }
 
-bool in_fingertip_workspace(Vector3d p, Quaterniond q, int finger_location, double finger_workspace[NUM_FINGERS*6], double* object_surface_discretization){
+bool in_fingertip_workspace(Vector3d p, Quaterniond q, int finger_idx, int finger_location, double finger_workspace[NUM_FINGERS*6], double* object_surface_discretization){
     return true;
 }
 
@@ -163,6 +164,45 @@ int primitiveOne(float goToGoalRand, Tree* T, Vector3d pos_lb,
             }
         }
         return numAdded;
+}
+
+
+void primitiveTwo(Tree* T, double finger_workspace[NUM_FINGERS*6], double* object_surface_discretization){
+    int node_idx = int(T->nodes.size()*randd());
+    Vector3d p(T->nodes[node_idx].config[0],T->nodes[node_idx].config[1],T->nodes[node_idx].config[2]);
+    Quaterniond q(T->nodes[node_idx].config[3],T->nodes[node_idx].config[4],T->nodes[node_idx].config[5],T->nodes[node_idx].config[6]);
+    std::vector<int> finger_to_relocate;
+    for (int k = 0; k < NUM_FINGERS; k++){
+        int fingers_left[NUM_FINGERS - 1];
+        int counter = 0;
+        for (int i = 0; i < NUM_FINGERS; i++){
+            if (i==k) { continue; }
+            fingers_left[counter] = T->nodes[node_idx].finger_locations[i];
+            counter++;
+        }
+        if (force_closure(p, q, fingers_left, object_surface_discretization, NUM_FINGERS-1)){
+            finger_to_relocate.push_back(k);
+        } 
+    }
+    if (finger_to_relocate.size() > 0){
+
+        // randomly choose a finger to relocate
+        int idx = int(randd()*finger_to_relocate.size());
+        int finger_idx = finger_to_relocate[idx];
+        // find all valid location to put this finger
+        std::vector<int> candidate_locations;
+        for (int i = 0; i < num_surface_points; i++){
+            if(in_fingertip_workspace(p, q, finger_idx, i, finger_workspace, object_surface_discretization)){
+                candidate_locations.push_back(i);
+            }
+        }
+        //randomly choose a valid position to put the finger
+        int finger_location = candidate_locations[int(candidate_locations.size()*randd())];
+        Node new_node(T->nodes[node_idx].config, T->nodes[node_idx].finger_locations);
+        new_node.finger_locations[finger_idx] = finger_location;
+        T->add_node(&new_node, node_idx);
+    }
+    return;
 }
 
 static void plannerRRT(double object_position_range[6], double finger_workspace[NUM_FINGERS*6], double* object_surface_discretization, 

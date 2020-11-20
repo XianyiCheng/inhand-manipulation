@@ -83,4 +83,5 @@ int main(){
     test_steer_orientation();
     test_contact_jacobian();
     test_lp();
+    std::cout << int(0.3) << int(0.6) <<std::endl;
 }
