@@ -30,7 +30,7 @@ for k = 1:6
     surface = [surface; DD];
 end
 
-start_finger = [7,23,43,54];
+start_finger = [23, 54, 43, 7];
 
 start_obj = [0,0,0,1,0,0,0];
 goal_obj = [0,0,0,0,1,0,0];

@@ -4,6 +4,8 @@
 
 #define PI 3.141592654
 #define NUM_FINGERS 4
+#define NUM_DISCRETIZATION 16
+#define OUT_OF_INDEX 100
 
 /* Input Arguments */
 #define	POSRANGE_IN      prhs[0]
@@ -25,7 +27,6 @@
 #define	TREESIZE_OUT	plhs[3]
 #define FRICTION_COEFF 0.8
 
-int num_surface_points = 64;
 // tunable parameters
 double goal_thr = PI*1/180;
 double goal_biased_prob = 0.7;
@@ -47,20 +48,167 @@ void to_config(double config[7], Vector3d p, Quaterniond q){
 }
 
 
-bool force_closure(Vector3d p, Quaterniond q, int* finger_locations, double* object_surface_discretization, int num_of_contacts){
+
+bool force_closure(Vector3d p, Quaterniond q, int finger_locations[NUM_FINGERS], double* object_surface_discretization){
+
+    std::vector<int> contact_index;
+    int num_of_contacts = 0;
+    // assume when the num in "finger_locations[NUM_FINGERS]" is OUT_OF_INDEX, it means the finger is out of contact.
+    // finger workspace constraints first
+    for(int i=0; i<NUM_FINGERS; i++){
+        if(finger_locations[i] != OUT_OF_INDEX){
+            contact_index.push_back(i);
+            num_of_contacts ++;
+        }
+    }
+
+    // define the friction cone in contact frame and in object frame
+    MatrixXd w_c(6, 4*num_of_contacts);
+    for(int j=0; j<num_of_contacts; j++){
+        // define polyhedral friction cone
+        VectorXd f1_c(6,1);
+        f1_c << 0, -FRICTION_COEFF, 1, 0, 0, 0;
+        VectorXd f2_c(6,1);
+        f2_c << 0, FRICTION_COEFF, 1, 0, 0, 0;
+        VectorXd f3_c(6,1);
+        f3_c << -FRICTION_COEFF, 0, 1, 0, 0, 0;
+        VectorXd f4_c(6,1);
+        f4_c << FRICTION_COEFF, 0, 1, 0, 0, 0;
+
+        // find the finger position and norm from surface
+        int finger_location_idx = contact_index[j];  // e.g. contact_index = [0, 1, 3]
+        Vector3d fp_o;
+        Vector3d fn_o;
+        for(int k=0; k<3; k++){
+            fp_o[k] = object_surface_discretization[finger_locations[finger_location_idx]*6 + k];
+            fn_o[k] = object_surface_discretization[finger_locations[finger_location_idx]*6 + k + 3];
+        }
+
+        Matrix3d R_wo = q.toRotationMatrix();
+        Vector3d fp_w = R_wo*fp_o + p;
+
+        // get contact kinematics and transfer force in contact frame to object frame
+        // std::cout << "finger index: "<< j << std::endl;
+        // std::cout << "fp_o: "<< fp_o << std::endl;
+        // std::cout << "fn_o: "<< fn_o << std::endl;
+        // std::cout << "fp_w: "<< fp_w << std::endl;
+
+        MatrixXd adgco = contact_jacobian(fp_o, fn_o);
+        // std::cout << "adgco: "<< adgco << std::endl;
+        VectorXd f1_o = adgco.transpose()*f1_c;
+        // std::cout << "f1_c: "<< f1_c << std::endl;
+        // std::cout << "f1_o: "<< f1_o << std::endl;
+
+        VectorXd f2_o = adgco.transpose()*f2_c;
+        VectorXd f3_o = adgco.transpose()*f3_c;
+        VectorXd f4_o = adgco.transpose()*f4_c;
+
+        w_c.col(j*4) = f1_o;
+        w_c.col(j*4 + 1) = f2_o;
+        w_c.col(j*4 + 2) = f3_o;
+        w_c.col(j*4 + 3) = f4_o;
+    }
+
+    // std::cout << "w_c: "<< w_c << std::endl;
+
+    // solve it by LP
+    VectorXd sum_2_w_c = w_c.rowwise().sum();   // sum(w_c, 2)
+    VectorXd avg_w_c = sum_2_w_c/w_c.cols(); // get average
+    VectorXd T_0 = -avg_w_c;
+    MatrixXd T(6, 4*num_of_contacts);
+    for(int i=0; i<w_c.cols(); i++){
+        T.col(i) = w_c.col(i) - avg_w_c;
+    }
+    
+    // set up LP
+    VectorXd C = -T_0;
+    // std::cout << "C: " << C <<std::endl;
+    MatrixXd A = T.transpose();
+    // std::cout << "C: " << C <<std::endl;
+    VectorXd b(w_c.cols());
+    b.fill(1);
+
+    MatrixXd Ae(w_c.cols(), 6);
+    VectorXd be(w_c.cols());
+    VectorXd xl(6);
+    xl << std::numeric_limits<double>::min(), std::numeric_limits<double>::min(), std::numeric_limits<double>::min(), std::numeric_limits<double>::min(), std::numeric_limits<double>::min(), std::numeric_limits<double>::min();
+    VectorXd xu(6);
+    xu << std::numeric_limits<double>::max(), std::numeric_limits<double>::max(), std::numeric_limits<double>::max(), std::numeric_limits<double>::max(), std::numeric_limits<double>::max(), std::numeric_limits<double>::max();
+    VectorXd xs(6); 
+    double optimal_cost;
+
+    bool result = lp(C, A, b, Ae, be, xl, xu, &xs, &optimal_cost);
+    if(!result){
+        return false;
+    }
+
     return true;
 }
 
-bool in_fingertip_workspace(Vector3d p, Quaterniond q, int finger_idx, int finger_location, double finger_workspace[NUM_FINGERS*6], double* object_surface_discretization){
+
+bool in_fingertip_workspace(Vector3d p, Quaterniond q, int finger_location, int finger_index, double finger_workspace[NUM_FINGERS*6], double* object_surface_discretization){
+
+    // get finger vector in object frame, I guess only first 3 is needed
+    Vector3d fp_o;
+    for(int i=0; i<3; i++){
+        fp_o[i] = object_surface_discretization[finger_location*6 + i];
+    }
+    // std::cout << "finger position on object: " << fp_o << std::endl;
+
+    // finger location in object frame, need to tranfer to world frame
+    Matrix3d R_wo = q.toRotationMatrix();
+    Vector3d fp_w = R_wo*fp_o + p;
+
+    // std::cout << "finger position on world: " << fp_w << std::endl;
+    
+    // check if the finger is within the workspace
+    double current_workspace[6]; 
+    for(int j = 0; j<6; j++){                                        // get the current finger workspace
+        current_workspace[j] = finger_workspace[finger_index*6 + j];
+    }
+    // std::cout << "current workspace: " << current_workspace[0] << ", " << current_workspace[1] << ", " << current_workspace[2] << ", " << current_workspace[3] << ", " << current_workspace[4] << ", " << current_workspace[5] << std::endl;
+    for(int i=0; i<3; i++){
+        if(fp_w[i] < current_workspace[i] || fp_w[i] > current_workspace[i+3]){ // if out of range, invalid
+            return false;
+        }
+    }
     return true;
 }
+
 
 bool IsValidConfiguration(double config[7], int finger_locations[NUM_FINGERS], double finger_workspace[NUM_FINGERS*6], double* object_surface_discretization){
     //TODO: IsValidConfiguration: check constraints
     // finger workspace constraints: kinematics included
     // force closure constraints: friction included
+
+    // get object config
+    Vector3d obj_p(config[0], config[1], config[2]); 
+    Quaterniond obj_q(config[3], config[4], config[5], config[6]); 
+
+    // assume when the num in "finger_locations[NUM_FINGERS]" is 100, it means the finger is out of contact.
+    //finger workspace constraints first
+    for(int i=0; i<NUM_FINGERS; i++){
+        if(finger_locations[i] != OUT_OF_INDEX){
+            bool workspace_validity = in_fingertip_workspace(obj_p, obj_q, finger_locations[i], i, finger_workspace, object_surface_discretization);
+            // std::cout << "workspace validity: " << workspace_validity << std::endl;
+            if(!workspace_validity){
+                printf("workspace not valid \n");
+                return false;
+            }
+        }
+    }
+    printf("workspace valid \n");
+    
+    // force closure constraints
+    bool force_validity = force_closure(obj_p, obj_q, finger_locations, object_surface_discretization);
+    if(!force_validity){
+        printf("force closure not valid \n");
+        return false;
+    }
+
     return true;
 }
+
 
 
 int extend(int near_idx, double config_rand[7], 
@@ -89,13 +237,16 @@ double epsilon_translation, double epsilon_angle, int steps, Tree* T, double fin
         double config_check[7];
         to_config(config_check, x_check, q_check);
 
+        printf("Start checking \n");
         if(IsValidConfiguration(config_check, T->nodes[near_idx].finger_locations, finger_workspace, object_surface_discretization)) // TODO
         {
+            printf("both valid \n");
             status = 1;//advanced
             to_config(config_new, x_check, q_check);
             if (dist(config_new, config_rand)<0.001) { status = 2; break; }//reached
             
-        } else { break; }
+        } else { 
+            break; }
     }
 
     if (status!=0){
@@ -164,45 +315,6 @@ int primitiveOne(float goToGoalRand, Tree* T, Vector3d pos_lb,
             }
         }
         return numAdded;
-}
-
-
-void primitiveTwo(Tree* T, double finger_workspace[NUM_FINGERS*6], double* object_surface_discretization){
-    int node_idx = int(T->nodes.size()*randd());
-    Vector3d p(T->nodes[node_idx].config[0],T->nodes[node_idx].config[1],T->nodes[node_idx].config[2]);
-    Quaterniond q(T->nodes[node_idx].config[3],T->nodes[node_idx].config[4],T->nodes[node_idx].config[5],T->nodes[node_idx].config[6]);
-    std::vector<int> finger_to_relocate;
-    for (int k = 0; k < NUM_FINGERS; k++){
-        int fingers_left[NUM_FINGERS - 1];
-        int counter = 0;
-        for (int i = 0; i < NUM_FINGERS; i++){
-            if (i==k) { continue; }
-            fingers_left[counter] = T->nodes[node_idx].finger_locations[i];
-            counter++;
-        }
-        if (force_closure(p, q, fingers_left, object_surface_discretization, NUM_FINGERS-1)){
-            finger_to_relocate.push_back(k);
-        } 
-    }
-    if (finger_to_relocate.size() > 0){
-
-        // randomly choose a finger to relocate
-        int idx = int(randd()*finger_to_relocate.size());
-        int finger_idx = finger_to_relocate[idx];
-        // find all valid location to put this finger
-        std::vector<int> candidate_locations;
-        for (int i = 0; i < num_surface_points; i++){
-            if(in_fingertip_workspace(p, q, finger_idx, i, finger_workspace, object_surface_discretization)){
-                candidate_locations.push_back(i);
-            }
-        }
-        //randomly choose a valid position to put the finger
-        int finger_location = candidate_locations[int(candidate_locations.size()*randd())];
-        Node new_node(T->nodes[node_idx].config, T->nodes[node_idx].finger_locations);
-        new_node.finger_locations[finger_idx] = finger_location;
-        T->add_node(&new_node, node_idx);
-    }
-    return;
 }
 
 static void plannerRRT(double object_position_range[6], double finger_workspace[NUM_FINGERS*6], double* object_surface_discretization, 
