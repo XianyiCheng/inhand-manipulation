@@ -48,7 +48,6 @@ void to_config(double config[7], Vector3d p, Quaterniond q){
 }
 
 
-
 bool force_closure(Vector3d p, Quaterniond q, int finger_locations[NUM_FINGERS], double* object_surface_discretization){
 
     std::vector<int> contact_index;
@@ -138,11 +137,8 @@ bool force_closure(Vector3d p, Quaterniond q, int finger_locations[NUM_FINGERS],
     double optimal_cost;
 
     bool result = lp(C, A, b, Ae, be, xl, xu, &xs, &optimal_cost);
-    if(!result){
-        return false;
-    }
-
-    return true;
+    
+    return result;
 }
 
 
