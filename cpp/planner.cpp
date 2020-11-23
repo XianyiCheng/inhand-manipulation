@@ -5,7 +5,7 @@
 #define PI 3.141592654
 #define NUM_FINGERS 4
 #define NUM_DISCRETIZATION 16
-#define OUT_OF_INDEX 100
+#define OUT_OF_INDEX INT_MAX
 
 /* Input Arguments */
 #define	POSRANGE_IN      prhs[0]
@@ -15,6 +15,7 @@
 #define	FINGER_START_IN     prhs[4]
 #define	OBJECT_GOAL_IN     prhs[5]
 #define PLANNERIN_IN     prhs[6]
+#define MAX_SAMPLES     prhs[7]
 
 /* Planner Ids */
 #define RRT         0
@@ -27,6 +28,7 @@
 #define	TREESIZE_OUT	plhs[3]
 #define FRICTION_COEFF 0.8
 
+int num_surface_points = 64;
 // tunable parameters
 double goal_thr = PI*1/180;
 double goal_biased_prob = 0.7;
@@ -36,6 +38,7 @@ double epsilon_angle = PI*45/180;
 int interpolation_steps = 10;
 double interpolation_length = 1/double(interpolation_steps);
 int max_samples = 1000;
+
 
 void to_config(double config[7], Vector3d p, Quaterniond q){
     config[0] = p[0];
@@ -144,6 +147,11 @@ bool force_closure(Vector3d p, Quaterniond q, int finger_locations[NUM_FINGERS],
 
 bool in_fingertip_workspace(Vector3d p, Quaterniond q, int finger_location, int finger_index, double finger_workspace[NUM_FINGERS*6], double* object_surface_discretization){
 
+    // p: object positions
+    // q: object orientations
+    // finger_location: finger location index in object_surface discretization 
+    // finger_index: index of fingers corresponding to fingertip workspace
+
     // get finger vector in object frame, I guess only first 3 is needed
     Vector3d fp_o;
     for(int i=0; i<3; i++){
@@ -193,7 +201,7 @@ bool IsValidConfiguration(double config[7], int finger_locations[NUM_FINGERS], d
             }
         }
     }
-    printf("workspace valid \n");
+    //printf("workspace valid \n");
     
     // force closure constraints
     bool force_validity = force_closure(obj_p, obj_q, finger_locations, object_surface_discretization);
@@ -204,7 +212,6 @@ bool IsValidConfiguration(double config[7], int finger_locations[NUM_FINGERS], d
 
     return true;
 }
-
 
 
 int extend(int near_idx, double config_rand[7], 
@@ -313,6 +320,55 @@ int primitiveOne(float goToGoalRand, Tree* T, Vector3d pos_lb,
         return numAdded;
 }
 
+
+void primitiveTwo(int node_idx, Tree* T, double finger_workspace[NUM_FINGERS*6], double* object_surface_discretization) {
+    
+    Vector3d p(T->nodes[node_idx].config[0],T->nodes[node_idx].config[1],T->nodes[node_idx].config[2]);
+    Quaterniond q(T->nodes[node_idx].config[3],T->nodes[node_idx].config[4],T->nodes[node_idx].config[5],T->nodes[node_idx].config[6]);
+    std::vector<int> finger_to_relocate;
+
+    for (int k = 0; k < NUM_FINGERS; k++){
+        int fingers_left[NUM_FINGERS];
+        for (int i = 0; i < NUM_FINGERS; i++){
+            if (i==k){ 
+                fingers_left[i] = OUT_OF_INDEX;
+            } else {
+                fingers_left[i] = T->nodes[node_idx].finger_locations[i];
+            }
+
+        }
+        if (force_closure(p, q, fingers_left, object_surface_discretization)){
+            finger_to_relocate.push_back(k);
+        } 
+    }
+    if (finger_to_relocate.size() > 0){
+
+        // randomly choose a finger to relocate
+        int idx = int(randd()*finger_to_relocate.size());
+        int finger_idx = finger_to_relocate[idx];
+        // find all valid location to put this finger
+        std::vector<int> candidate_locations;
+        for (int i = 0; i < num_surface_points; i++){
+            if(in_fingertip_workspace(p, q, i, finger_idx, finger_workspace, object_surface_discretization)){
+                if (i!=T->nodes[node_idx].finger_locations[finger_idx])
+                {
+                    candidate_locations.push_back(i);
+                }
+            }
+        }
+        //randomly choose a valid position to put the finger
+        if (candidate_locations.size() > 0){
+            int finger_location = candidate_locations[int(candidate_locations.size()*randd())];
+            Node new_node(T->nodes[node_idx].config, T->nodes[node_idx].finger_locations);
+            new_node.finger_locations[finger_idx] = finger_location;
+            T->add_node(&new_node, node_idx);
+        }
+
+    }
+    return;
+}
+
+
 static void plannerRRT(double object_position_range[6], double finger_workspace[NUM_FINGERS*6], double* object_surface_discretization, 
     double start_object_config[7], int start_finger_locations[NUM_FINGERS], double goal_object_config[7], 
     double*** object_path, int*** finger_path, int* planlength, int* treesize){
@@ -353,7 +409,7 @@ static void plannerRRT(double object_position_range[6], double finger_workspace[
             double dd = dist(T.nodes[near_idx].config, goal_object_config);
             if (dd <= goal_thr)
             {
-                printf("goal reached \n");
+                //printf("goal reached \n");
                 goal_idx = near_idx;
                 break;
             }
@@ -361,30 +417,45 @@ static void plannerRRT(double object_position_range[6], double finger_workspace[
         } else {
             //TODO primitive 2: randomly choose a node to relocate 1 randomly choosed finger
             // randomly choose a node
-            // randomly choose a finger
-            // check if other fingers can still maintain force closure
-            // if yes: randomly relocate the finger to an unoccupied discretized object surface point
-            // if no: check other fingers until all fingers are checked
-            continue;
+            // randomly choose a finger without which other fingers can still maintain force closure
+            // randomly relocate the finger to an unoccupied discretized object surface point
+            double primitive2_near_prob = 0.8;
+            int node_idx;
+            if (randd() < primitive2_near_prob)
+            {
+                std::vector<int> nears;
+                T.nearest_neighbors(goal_object_config, &nears);
+                node_idx = nears[int(nears.size()*randd())];
+            } else {
+                node_idx = int(T.nodes.size()*randd());
+            }
+            primitiveTwo(node_idx, &T, finger_workspace, object_surface_discretization);
         }
     }
 
     if (goal_idx!=-1){
-        std::vector<int> node_path;
-        T.backtrack(goal_idx, &node_path);
-        int l = node_path.size();
-        *planlength = l;
-        *object_path = (double**) malloc(l*sizeof(double*));
-        *finger_path = (int**) malloc(l*sizeof(int*));
-        for (int i=0; i< l; i++){
-            (*object_path)[i] = T.nodes[node_path[l-i-1]].config;
-            (*finger_path)[i] = T.nodes[node_path[l-i-1]].finger_locations;
-        }  
-        *treesize = T.nodes.size();
-        return;
+        printf("GOAL REACHED! \n");
+    } else {
+        printf("GOAL NOT REACHED. \n");
+        goal_idx =  T.nearest_neighbor(goal_object_config);
     }
 
+    std::vector<int> node_path;
+    T.backtrack(goal_idx, &node_path);
+    int l = node_path.size();
+    *planlength = l;
+    *object_path = (double**) malloc(l*sizeof(double*));
+    *finger_path = (int**) malloc(l*sizeof(int*));
+    for (int i=0; i< l; i++){
+        (*object_path)[i] = T.nodes[node_path[l-i-1]].config;
+        (*finger_path)[i] = T.nodes[node_path[l-i-1]].finger_locations;
+    }  
+    *treesize = T.nodes.size();
+
+    return;
+
 } 
+
 
 static void plannerRRTCONNECT(double object_position_range[6], double finger_workspace[NUM_FINGERS*6], double* object_surface_discretization, 
     double start_object_config[7], int start_finger_locations[NUM_FINGERS], double goal_object_config[7], 
@@ -490,17 +561,19 @@ static void plannerRRTCONNECT(double object_position_range[6], double finger_wor
 } 
 
 
-
 void mexFunction( int nlhs, mxArray *plhs[], 
 		  int nrhs, const mxArray*prhs[])
      
 { 
     
     /* Check for proper number of arguments */    
-    if (nrhs != 7) { 
+    if (nrhs != 8 && nrhs!=7) { 
 	    mexErrMsgIdAndTxt( "MATLAB:planner:invalidNumInputs",
-                "Seven input arguments required."); 
+                "Incorrect number of input arguments (7 or 8)."); 
     } 
+    if (nrhs == 8){
+        max_samples = (int)*mxGetPr(MAX_SAMPLES);
+    }
 
     double* object_range = mxGetPr(POSRANGE_IN);      
     double* finger_workspace = mxGetPr(WORKSPACE_IN);

@@ -5,7 +5,8 @@ HH = 1; % half height of the object
 
 posrange = [-0.5,-0.5,-0.5,0.5,0.5,0.5];
 
-ws = [-0.4,-0.4,-1.5;0.4,0.4,1.5];
+ws_a = 0.6;
+ws = [-ws_a,-ws_a,-1.5;ws_a,ws_a,1.5];
 ws1 = ws + [HW,0,0];
 ws2 = ws + [-HW,0,0];
 ws3 = ws + [0,HW,0];
@@ -35,3 +36,5 @@ start_finger = [23, 54, 43, 7];
 start_obj = [0,0,0,1,0,0,0];
 goal_obj = [0,0,0,0,1,0,0];
 plannerid = 0;
+
+max_samples = 3000;

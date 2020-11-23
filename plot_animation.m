@@ -1,5 +1,6 @@
 function plot_animation(HL, HW, HH, workspace, surface, object_path, finger_path)
 figure;
+%waitforbuttonpress;
 n_fingers = size(workspace,1)/2;
 R = eye(3);
 for i = 1:n_fingers
@@ -37,7 +38,7 @@ for i = 1:n
         hold on;
         h = [h,hj];
     end
-    pause(0.5);
+    pause(1);
     if i ~= n
         for k = 1:numel(h)
             delete(h(k));
