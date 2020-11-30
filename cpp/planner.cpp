@@ -279,6 +279,67 @@ int connect(int* near_idx, double config[7], double epsilon_translation,
     return code;
 }
 
+bool is_free_to_connect(int parent_idx, int child_idx, int steps, Tree* T, double finger_workspace[NUM_FINGERS*6], double* object_surface_discretization)
+{
+    std::vector<int> f_idx;
+    int finger_change_count = 0;
+    int finger_loc[NUM_FINGERS];
+
+    for (int i = 0; i < NUM_FINGERS; i++){
+        finger_loc[i] = T->nodes[parent_idx].finger_locations[i];
+
+        if (T->nodes[parent_idx].finger_locations[i]!=T->nodes[child_idx].finger_locations[i])
+        {
+            f_idx.push_back(i);
+        }
+    }
+
+    double* config_near = T->nodes[parent_idx].config;
+    Vector3d x_near(config_near[0], config_near[1], config_near[2]); 
+    Quaterniond q_near(config_near[3], config_near[4], config_near[5], config_near[6]); 
+
+    double* config_rand = T->nodes[child_idx].config;
+    Vector3d x_rand(config_rand[0], config_rand[1], config_rand[2]); 
+    Quaterniond q_rand(config_rand[3], config_rand[4], config_rand[5], config_rand[6]); 
+
+    int status = false; // extend status: 0: trapped, 1:advanced, 2:reached
+
+    double t = 1/double(steps);
+
+    for(int i = 0; i < steps; i++){
+        Vector3d x_check = x_near + 0.1*(i+1)*(x_rand - x_near);
+        Quaterniond q_check = q_near.slerp(0.1*(i+1), q_rand);
+        double config_check[7];
+        to_config(config_check, x_check, q_check);
+
+        // try to change finger contact
+        for (int j = 0; j < f_idx.size(); j++){
+            int k = f_idx[j];
+            int pre_loc = finger_loc[k]; 
+            finger_loc[k] = OUT_OF_INDEX;
+            // check is in workspace && is force closure
+            int loc = T->nodes[child_idx].finger_locations[k];
+            if (in_fingertip_workspace(x_check, q_check, loc, k, finger_workspace, object_surface_discretization)
+                 && force_closure(x_check, q_check, finger_loc, object_surface_discretization)) {
+                finger_loc[k] = loc;
+                f_idx.erase(f_idx.begin() + j);
+            } else {
+                finger_loc[k] = pre_loc;
+            }
+        }
+
+        if(IsValidConfiguration(config_check, finger_loc, finger_workspace, object_surface_discretization)) // TODO
+        {
+            status = true;
+        } else { 
+            break; }
+    }
+
+    status = status & (f_idx.size() == 0);
+
+    return status;
+}
+
 int primitiveOne(float goToGoalRand, Tree* T, Vector3d pos_lb,
                  Vector3d pos_ub, Vector3d goal_position,
                  Quaterniond goal_orientation,
