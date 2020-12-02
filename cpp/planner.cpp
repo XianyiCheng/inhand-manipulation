@@ -8,14 +8,15 @@
 #define OUT_OF_INDEX INT_MAX
 
 /* Input Arguments */
-#define	POSRANGE_IN      prhs[0]
-#define	WORKSPACE_IN	prhs[1]
-#define	SURFACE_IN     prhs[2]
+#define	POSRANGE_IN         prhs[0]
+#define	WORKSPACE_IN	    prhs[1]
+#define	SURFACE_IN          prhs[2]
 #define	OBJECT_START_IN     prhs[3]
 #define	FINGER_START_IN     prhs[4]
-#define	OBJECT_GOAL_IN     prhs[5]
-#define PLANNERIN_IN     prhs[6]
-#define MAX_SAMPLES     prhs[7]
+#define	OBJECT_GOAL_IN      prhs[5]
+#define PLANNERIN_IN        prhs[6]
+#define MAX_SAMPLES         prhs[7]
+#define RRTSTAR_RADIUS      prhs[8]
 
 /* Planner Ids */
 #define RRT         0
@@ -196,7 +197,6 @@ bool IsValidConfiguration(double config[7], int finger_locations[NUM_FINGERS], d
             bool workspace_validity = in_fingertip_workspace(obj_p, obj_q, finger_locations[i], i, finger_workspace, object_surface_discretization);
             // std::cout << "workspace validity: " << workspace_validity << std::endl;
             if(!workspace_validity){
-                printf("workspace not valid \n");
                 return false;
             }
         }
@@ -206,7 +206,7 @@ bool IsValidConfiguration(double config[7], int finger_locations[NUM_FINGERS], d
     // force closure constraints
     bool force_validity = force_closure(obj_p, obj_q, finger_locations, object_surface_discretization);
     if(!force_validity){
-        printf("force closure not valid \n");
+        // printf("force closure not valid \n");
         return false;
     }
 
@@ -304,6 +304,7 @@ void rewire_neighborhood(
     std::vector<int> neighbors;
     T->neighborhood(nodeIdx, radius, &neighbors);
     // For each of the neighbors...
+    mexPrintf("Num Neighbors: %d\n", neighbors.size());
     for (int nidx : neighbors) {
         //  Check to see if having this as a parent would be a better cost.
         double newCost = nodeCost + get_edge_cost(T, nodeIdx, nidx);
@@ -362,10 +363,8 @@ int extend(
         double config_check[7];
         to_config(config_check, x_check, q_check);
 
-        printf("Start checking \n");
         if(IsValidConfiguration(config_check, T->nodes[near_idx].finger_locations, finger_workspace, object_surface_discretization))
         {
-            printf("both valid \n");
             status = 1;//advanced
             to_config(config_new, x_check, q_check);
             if (dist(config_new, config_rand)<0.001) { status = 2; break; }//reached
@@ -380,6 +379,7 @@ int extend(
       T->nodes[T->nodes.size() - 1].cost = T->nodes[near_idx].cost
                       + get_edge_cost(T, near_idx, T->nodes.size() - 1);
       if (rstar_radius > 0) {
+          mexPrintf("Rewiring\n");
           rewire_neighborhood(
                   T->nodes.size() - 1,
                   T,
@@ -414,7 +414,8 @@ int primitiveOne(float goToGoalRand, Tree* T, Vector3d pos_lb,
                  Vector3d pos_ub, Vector3d goal_position,
                  Quaterniond goal_orientation,
                  double finger_workspace[NUM_FINGERS*6],
-                 double* object_surface_discretization)
+                 double* object_surface_discretization,
+                 double rstar_radius=0)
 {
         // bias sample toward the goal
         Vector3d x_rand;
@@ -443,7 +444,8 @@ int primitiveOne(float goToGoalRand, Tree* T, Vector3d pos_lb,
             // extend function
             code = extend(nears[i], config_rand, epsilon_translation,
                           epsilon_angle, interpolation_steps,T,
-                          finger_workspace, object_surface_discretization);
+                          finger_workspace, object_surface_discretization,
+                          rstar_radius);
             if (code != 0) {
                 numAdded++;
             }
@@ -516,6 +518,7 @@ static void plannerRRT(
 	*object_path = NULL;
     *finger_path = NULL;
 	*planlength = 0;
+    mexPrintf("RRT STAR RADIUS: %f\n", rstar_radius);
     
 
     Vector3d pos_lb(object_position_range[0], object_position_range[1], object_position_range[2]);
@@ -546,8 +549,9 @@ static void plannerRRT(
             // if dist to goal is smaller than some threshold, goal is found
             int near_idx = T.nearest_neighbor(goal_object_config);
             double dd = dist(T.nodes[near_idx].config, goal_object_config);
-            if (dd <= goal_thr)
+            if (goal_idx == -1 && dd <= goal_thr)
             {
+                printf("Found goal node in %d samples.\n", kk + 1);
                 goal_idx = near_idx;
                 if (rstar_radius <= 0) {
                     break;
@@ -570,6 +574,9 @@ static void plannerRRT(
                 node_idx = int(T.nodes.size()*randd());
             }
             primitiveTwo(node_idx, &T, finger_workspace, object_surface_discretization);
+        }
+        if (kk % 100 == 0) {
+            std::cout << "Iteration: " << kk << std::endl;
         }
     }
 
@@ -602,12 +609,16 @@ void mexFunction( int nlhs, mxArray *plhs[],
 { 
     
     /* Check for proper number of arguments */    
-    if (nrhs != 8 && nrhs!=7) { 
+    double rrtstar_radius = 0;
+    if (nrhs < 7 || nrhs > 9) {
 	    mexErrMsgIdAndTxt( "MATLAB:planner:invalidNumInputs",
-                "Incorrect number of input arguments (7 or 8)."); 
+                "Incorrect number of input arguments (7 or 8 or 9)."); 
     } 
-    if (nrhs == 8){
+    if (nrhs >= 8){
         max_samples = (int)*mxGetPr(MAX_SAMPLES);
+    }
+    if (nrhs >= 9) {
+        rrtstar_radius = (double)*mxGetPr(RRTSTAR_RADIUS);
     }
 
     double* object_range = mxGetPr(POSRANGE_IN);      
@@ -632,7 +643,7 @@ void mexFunction( int nlhs, mxArray *plhs[],
     //you can may be call the corresponding planner function here
     if (planner_id == RRT) {
       plannerRRT(object_range, finger_workspace, surface, start_object_config, start_finger, goal_object_config, 
-        &object_path, &finger_path, &planlength, &treesize);
+        &object_path, &finger_path, &planlength, &treesize, rrtstar_radius);
     } else {
         mexErrMsgIdAndTxt( "MATLAB:planner:invalidID",
         "Planner ID can only be 0."); 
