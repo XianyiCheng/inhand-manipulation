@@ -17,6 +17,7 @@
 #define PLANNERIN_IN        prhs[6]
 #define MAX_SAMPLES         prhs[7]
 #define RRTSTAR_RADIUS      prhs[8]
+#define EXTEND_MAX_ADDS     prhs[9]
 
 /* Planner Ids */
 #define RRT         0
@@ -39,6 +40,9 @@ double epsilon_angle = PI*45/180;
 int interpolation_steps = 10;
 double interpolation_length = 1/double(interpolation_steps);
 int max_samples = 1000;
+int max_extends = 100;
+// TODO: Can remove this once we have better costs.
+double finger_cost_coef = 1 / (2 * NUM_FINGERS);
 
 
 void to_config(double config[7], Vector3d p, Quaterniond q){
@@ -276,7 +280,13 @@ bool is_free_to_connect(int parent_idx, int child_idx, int steps, Tree* T, doubl
 
 double get_edge_cost(Tree* T, int node1, int node2) {
     // TODO: Update this function when we have a different cost function.
-    return dist(T->nodes[node1].config, T->nodes[node2].config);
+    double cost = dist(T->nodes[node1].config, T->nodes[node2].config);
+    for (int f_idx = 0; f_idx < NUM_FINGERS; f_idx++) {
+        if (T->nodes[node1].finger_locations[f_idx] != T->nodes[node2].finger_locations[f_idx]) {
+            cost += finger_cost_coef;
+        }
+    }
+    return cost;
 }
 
 void update_node_cost(
@@ -311,6 +321,12 @@ void rewire_neighborhood(
         if (T->nodes[nidx].cost <= newCost) {
             continue;
         }
+        // Check to make sure we wouldn't be making any cycles in the graph.
+        // for (int nchild : T->nodes[nidx].children) {
+        //     if (nchild == nodeIdx) { 
+        //         continue;
+        //     }
+        // }
         //  Check to see if these two nodes can be connected.
         if (!is_free_to_connect(
                     nodeIdx,
@@ -440,7 +456,11 @@ int primitiveOne(float goToGoalRand, Tree* T, Vector3d pos_lb,
         // and check constraints
         int numAdded = 0;
         int code;
-        for (int i = 0; i < nears.size(); i++) {
+        int total_extends = nears.size();
+        // if (total_extends > max_extends) { 
+        //     total_extends = max_extends;
+        // }
+        for (int i = 0; i < total_extends; i++) {
             // extend function
             code = extend(nears[i], config_rand, epsilon_translation,
                           epsilon_angle, interpolation_steps,T,
@@ -495,6 +515,8 @@ void primitiveTwo(int node_idx, Tree* T, double finger_workspace[NUM_FINGERS*6],
             Node new_node(T->nodes[node_idx].config, T->nodes[node_idx].finger_locations);
             new_node.finger_locations[finger_idx] = finger_location;
             T->add_node(&new_node, node_idx);
+            T->nodes[T->nodes.size() - 1].cost = T->nodes[node_idx].cost 
+                    + get_edge_cost(T, node_idx, T->nodes.size() - 1);
         }
 
     }
@@ -545,7 +567,7 @@ static void plannerRRT(
         if (randd() < primitive1_prob){
             primitiveOne(randd(), &T, pos_lb, pos_ub, goal_position,
                          goal_orientation, finger_workspace,
-                         object_surface_discretization);
+                         object_surface_discretization, rstar_radius);
             // if dist to goal is smaller than some threshold, goal is found
             int near_idx = T.nearest_neighbor(goal_object_config);
             double dd = dist(T.nodes[near_idx].config, goal_object_config);
@@ -576,7 +598,7 @@ static void plannerRRT(
             primitiveTwo(node_idx, &T, finger_workspace, object_surface_discretization);
         }
         if (kk % 100 == 0) {
-            std::cout << "Iteration: " << kk << std::endl;
+            std::cout << "Iteration: " << kk << " Nodes Expaneded: " << T.nodes.size() << std::endl;
         }
     }
 

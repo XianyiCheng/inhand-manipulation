@@ -28,6 +28,7 @@ int Tree::nearest_neighbor(double q[7])
       {
           near_idx = i;
           min_d = d;
+          break;
       }
   }
   return near_idx;
