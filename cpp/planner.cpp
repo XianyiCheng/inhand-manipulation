@@ -40,7 +40,8 @@ double epsilon_angle = PI*45/180;
 int interpolation_steps = 10;
 double interpolation_length = 1/double(interpolation_steps);
 int max_samples = 1000;
-int max_extends = 100;
+int max_extends = 1000;
+int children_max = 1000;
 // TODO: Can remove this once we have better costs.
 double finger_cost_coef = 1 / (2 * NUM_FINGERS);
 
@@ -314,7 +315,6 @@ void rewire_neighborhood(
     std::vector<int> neighbors;
     T->neighborhood(nodeIdx, radius, &neighbors);
     // For each of the neighbors...
-    mexPrintf("Num Neighbors: %d\n", neighbors.size());
     for (int nidx : neighbors) {
         //  Check to see if having this as a parent would be a better cost.
         double newCost = nodeCost + get_edge_cost(T, nodeIdx, nidx);
@@ -322,11 +322,11 @@ void rewire_neighborhood(
             continue;
         }
         // Check to make sure we wouldn't be making any cycles in the graph.
-        // for (int nchild : T->nodes[nidx].children) {
-        //     if (nchild == nodeIdx) { 
-        //         continue;
-        //     }
-        // }
+        for (int nchild : T->nodes[nidx].children) {
+            if (nchild == nodeIdx) { 
+                continue;
+            }
+        }
         //  Check to see if these two nodes can be connected.
         if (!is_free_to_connect(
                     nodeIdx,
@@ -395,7 +395,6 @@ int extend(
       T->nodes[T->nodes.size() - 1].cost = T->nodes[near_idx].cost
                       + get_edge_cost(T, near_idx, T->nodes.size() - 1);
       if (rstar_radius > 0) {
-          mexPrintf("Rewiring\n");
           rewire_neighborhood(
                   T->nodes.size() - 1,
                   T,
@@ -452,30 +451,39 @@ int primitiveOne(float goToGoalRand, Tree* T, Vector3d pos_lb,
         std::vector<int> nears;
         T->nearest_neighbors(config_rand, &nears);
         
-        //extend every node_near, do: linear interpolate
+        // extend every node_near, do: linear interpolate
         // and check constraints
         int numAdded = 0;
         int code;
         int total_extends = nears.size();
-        // if (total_extends > max_extends) { 
-        //     total_extends = max_extends;
-        // }
+        if (total_extends > max_extends) { 
+            total_extends = max_extends;
+        }
         for (int i = 0; i < total_extends; i++) {
-            // extend function
-            code = extend(nears[i], config_rand, epsilon_translation,
-                          epsilon_angle, interpolation_steps,T,
-                          finger_workspace, object_surface_discretization,
-                          rstar_radius);
-            if (code != 0) {
-                numAdded++;
+            if (T->nodes[nears[i]].children.size() <= children_max){
+                code = extend(nears[i], config_rand, epsilon_translation,
+                              epsilon_angle, interpolation_steps,T,
+                              finger_workspace, object_surface_discretization,
+                              rstar_radius);
+                if (code != 0) {
+                    numAdded++;
+                }
             }
         }
         return numAdded;
 }
 
 
-void primitiveTwo(int node_idx, Tree* T, double finger_workspace[NUM_FINGERS*6], double* object_surface_discretization) {
-    
+void primitiveTwo(
+        int node_idx,
+        Tree* T,
+        double finger_workspace[NUM_FINGERS*6],
+        double* object_surface_discretization,
+        int steps,
+        double rstar_radius=0) {
+    if (T->nodes[node_idx].children.size() > children_max) { 
+        return;
+    }
     Vector3d p(T->nodes[node_idx].config[0],T->nodes[node_idx].config[1],T->nodes[node_idx].config[2]);
     Quaterniond q(T->nodes[node_idx].config[3],T->nodes[node_idx].config[4],T->nodes[node_idx].config[5],T->nodes[node_idx].config[6]);
     std::vector<int> finger_to_relocate;
@@ -517,6 +525,15 @@ void primitiveTwo(int node_idx, Tree* T, double finger_workspace[NUM_FINGERS*6],
             T->add_node(&new_node, node_idx);
             T->nodes[T->nodes.size() - 1].cost = T->nodes[node_idx].cost 
                     + get_edge_cost(T, node_idx, T->nodes.size() - 1);
+            if (rstar_radius > 0) {
+                rewire_neighborhood(
+                        T->nodes.size() - 1,
+                        T,
+                        rstar_radius,
+                        interpolation_steps,
+                        finger_workspace,
+                        object_surface_discretization);
+            }
         }
 
     }
@@ -540,7 +557,6 @@ static void plannerRRT(
 	*object_path = NULL;
     *finger_path = NULL;
 	*planlength = 0;
-    mexPrintf("RRT STAR RADIUS: %f\n", rstar_radius);
     
 
     Vector3d pos_lb(object_position_range[0], object_position_range[1], object_position_range[2]);
@@ -571,9 +587,12 @@ static void plannerRRT(
             // if dist to goal is smaller than some threshold, goal is found
             int near_idx = T.nearest_neighbor(goal_object_config);
             double dd = dist(T.nodes[near_idx].config, goal_object_config);
-            if (goal_idx == -1 && dd <= goal_thr)
-            {
-                printf("Found goal node in %d samples.\n", kk + 1);
+            if (dd <= goal_thr)
+            {    
+                if (goal_idx == -1) {
+                    printf("Found goal node in %d samples. Current plan cost: %f\n",
+                           kk + 1, T.nodes[near_idx].cost);
+                }  
                 goal_idx = near_idx;
                 if (rstar_radius <= 0) {
                     break;
@@ -595,10 +614,11 @@ static void plannerRRT(
             } else {
                 node_idx = int(T.nodes.size()*randd());
             }
-            primitiveTwo(node_idx, &T, finger_workspace, object_surface_discretization);
+            primitiveTwo(node_idx, &T, finger_workspace,
+                    object_surface_discretization, rstar_radius);
         }
         if (kk % 100 == 0) {
-            std::cout << "Iteration: " << kk << " Nodes Expaneded: " << T.nodes.size() << std::endl;
+            std::cout << "Iteration: " << kk << " Nodes Expanded: " << T.nodes.size() << std::endl;
         }
     }
 
