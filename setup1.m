@@ -37,4 +37,4 @@ start_obj = [0,0,0,1,0,0,0];
 goal_obj = [0,0,0,0,1,0,0];
 plannerid = 0;
 
-max_samples = 3000;
+max_samples = 1000;

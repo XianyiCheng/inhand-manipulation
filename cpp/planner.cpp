@@ -459,7 +459,7 @@ static void plannerRRT(double object_position_range[6], double finger_workspace[
 
     //search
     for (int kk = 0; kk < max_samples; kk++){
-
+        std::cout << "iter: " << kk << std::endl;
         // random sample which primitive to choose
         if (randd() < primitive1_prob){
             primitiveOne(randd(), &T, pos_lb, pos_ub, goal_position,
