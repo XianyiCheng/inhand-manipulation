@@ -8,14 +8,16 @@
 #define OUT_OF_INDEX INT_MAX
 
 /* Input Arguments */
-#define	POSRANGE_IN      prhs[0]
-#define	WORKSPACE_IN	prhs[1]
-#define	SURFACE_IN     prhs[2]
+#define	POSRANGE_IN         prhs[0]
+#define	WORKSPACE_IN	    prhs[1]
+#define	SURFACE_IN          prhs[2]
 #define	OBJECT_START_IN     prhs[3]
 #define	FINGER_START_IN     prhs[4]
-#define	OBJECT_GOAL_IN     prhs[5]
-#define PLANNERIN_IN     prhs[6]
-#define MAX_SAMPLES     prhs[7]
+#define	OBJECT_GOAL_IN      prhs[5]
+#define PLANNERIN_IN        prhs[6]
+#define MAX_SAMPLES         prhs[7]
+#define RRTSTAR_RADIUS      prhs[8]
+#define EXTEND_MAX_ADDS     prhs[9]
 
 /* Planner Ids */
 #define RRT         0
@@ -38,6 +40,10 @@ double epsilon_angle = PI*45/180;
 int interpolation_steps = 10;
 double interpolation_length = 1/double(interpolation_steps);
 int max_samples = 1000;
+int max_extends = 1000;
+int children_max = 1000;
+// TODO: Can remove this once we have better costs.
+double finger_cost_coef = 1.0; // / (0.5 * NUM_FINGERS);
 
 
 void to_config(double config[7], Vector3d p, Quaterniond q){
@@ -196,7 +202,6 @@ bool IsValidConfiguration(double config[7], int finger_locations[NUM_FINGERS], d
             bool workspace_validity = in_fingertip_workspace(obj_p, obj_q, finger_locations[i], i, finger_workspace, object_surface_discretization);
             // std::cout << "workspace validity: " << workspace_validity << std::endl;
             if(!workspace_validity){
-                printf("workspace not valid \n");
                 return false;
             }
         }
@@ -206,77 +211,11 @@ bool IsValidConfiguration(double config[7], int finger_locations[NUM_FINGERS], d
     // force closure constraints
     bool force_validity = force_closure(obj_p, obj_q, finger_locations, object_surface_discretization);
     if(!force_validity){
-        printf("force closure not valid \n");
+        // printf("force closure not valid \n");
         return false;
     }
 
     return true;
-}
-
-
-int extend(int near_idx, double config_rand[7], 
-double epsilon_translation, double epsilon_angle, int steps, Tree* T, double finger_workspace[NUM_FINGERS*6], double* object_surface_discretization)
-{
-    // TODO: extend function 
-    double* config_near = T->nodes[near_idx].config;
-    Vector3d x_near(config_near[0], config_near[1], config_near[2]); 
-    Quaterniond q_near(config_near[3], config_near[4], config_near[5], config_near[6]); 
-
-    Vector3d x_rand(config_rand[0], config_rand[1], config_rand[2]); 
-    Quaterniond q_rand(config_rand[3], config_rand[4], config_rand[5], config_rand[6]); 
-
-    // steer by epsilon
-    x_rand = steer_position(x_near, x_rand, epsilon_translation);
-    q_rand = steer_quaternion(q_near, q_rand, epsilon_angle);
-
-    int status = 0; // extend status: 0: trapped, 1:advanced, 2:reached
-
-    double config_new[7] = {0,0,0,0,0,0,0};
-    double t = 1/double(steps);
-
-    for(int i = 0; i < steps; i++){
-        Vector3d x_check = x_near + 0.1*(i+1)*(x_rand - x_near);
-        Quaterniond q_check = q_near.slerp(0.1*(i+1), q_rand);
-        double config_check[7];
-        to_config(config_check, x_check, q_check);
-
-        printf("Start checking \n");
-        if(IsValidConfiguration(config_check, T->nodes[near_idx].finger_locations, finger_workspace, object_surface_discretization)) // TODO
-        {
-            printf("both valid \n");
-            status = 1;//advanced
-            to_config(config_new, x_check, q_check);
-            if (dist(config_new, config_rand)<0.001) { status = 2; break; }//reached
-            
-        } else { 
-            break; }
-    }
-
-    if (status!=0){
-      Node node_new(config_new, T->nodes[near_idx].finger_locations);
-      node_new.cost = T->nodes[near_idx].cost + dist(config_new, config_near); // TODO: cost functions
-      T->add_node(&node_new, near_idx);    
-    }
-
-    return status;
-
-}
-
-int connect(int* near_idx, double config[7], double epsilon_translation,
-            double epsilon_angle, int steps, Tree* T,
-            double finger_workspace[NUM_FINGERS*6],
-            double* object_surface_discretization) 
-{
-    int code = 1;
-    while (code == 1) {
-        code = extend(*near_idx, config, epsilon_translation, epsilon_angle,
-                      steps, T, finger_workspace,
-                      object_surface_discretization);
-        if (code == 1) {
-            *near_idx = T->nodes.size() - 1;
-        }
-    }
-    return code;
 }
 
 bool is_free_to_connect(int parent_idx, int child_idx, int steps, Tree* T, double finger_workspace[NUM_FINGERS*6], double* object_surface_discretization)
@@ -340,11 +279,197 @@ bool is_free_to_connect(int parent_idx, int child_idx, int steps, Tree* T, doubl
     return status;
 }
 
+double get_edge_cost(Tree* T, int node1, int node2) {
+    // TODO: Update this function when we have a different cost function.
+    double cost = dist(T->nodes[node1].config, T->nodes[node2].config);
+    for (int f_idx = 0; f_idx < NUM_FINGERS; f_idx++) {
+        if (T->nodes[node1].finger_locations[f_idx] != T->nodes[node2].finger_locations[f_idx]) {
+            cost += finger_cost_coef;
+        }
+    }
+    return cost;
+}
+
+void update_node_cost(
+        Tree* T,
+        int nodeIdx,
+        double newCost) {
+    double edgeCost;
+    T->nodes[nodeIdx].cost = newCost;
+    for (int child : T->nodes[nodeIdx].children) {
+        edgeCost = get_edge_cost(T, nodeIdx, child);
+        update_node_cost(T, child, newCost + edgeCost);
+    }
+    return;
+}
+
+void rewire_neighborhood(
+        int nodeIdx,
+        Tree* T,
+        double radius,
+        int steps,
+        double finger_workspace[NUM_FINGERS*6],
+        double* object_surface_discretization) {
+
+    double nodeCost = T->nodes[nodeIdx].cost;
+    // Get the neeighbors around the node in question.
+    std::vector<int> neighbors;
+    T->neighborhood(nodeIdx, radius, &neighbors);
+    
+    // For each of the neighbors...
+
+    // nidx as parent
+    for (int nidx : neighbors) {
+        if (nidx!=0){
+            T->nodes[nidx].cost = T->nodes[T->nodes[nidx].parent].cost + get_edge_cost(T, T->nodes[nidx].parent, nidx);
+        }
+
+        //  Check to see if having this as a parent would be a better cost.
+        double newCost = T->nodes[nidx].cost + get_edge_cost(T, nidx, nodeIdx);
+        if (nodeCost <= newCost) {
+            continue;
+        }
+        // Check to make sure we wouldn't be making any cycles in the graph.
+        for (int nchild : T->nodes[nidx].children) {
+            if (nchild == nodeIdx) { 
+                continue;
+            }
+        }
+        //  Check to see if these two nodes can be connected.
+        if (!is_free_to_connect(
+                    nidx,
+                    nodeIdx,
+                    steps,
+                    T,
+                    finger_workspace,
+                    object_surface_discretization)) {
+            continue;
+        }
+        //  Rewire the node.
+        T->remove_parent(nodeIdx);
+        T->set_parent(nidx, nodeIdx);
+        update_node_cost(T, nodeIdx, newCost); 
+    }
+
+    // nodeIdx as parent
+    nodeCost = T->nodes[nodeIdx].cost;
+    for (int nidx : neighbors) {
+        //  Check to see if having this as a parent would be a better cost.
+        double newCost = nodeCost + get_edge_cost(T, nodeIdx, nidx);
+        if (T->nodes[nidx].cost <= newCost) {
+            continue;
+        }
+        // Check to make sure we wouldn't be making any cycles in the graph.
+        for (int nchild : T->nodes[nidx].children) {
+            if (nchild == nodeIdx) { 
+                continue;
+            }
+        }
+        //  Check to see if these two nodes can be connected.
+        if (!is_free_to_connect(
+                    nodeIdx,
+                    nidx,
+                    steps,
+                    T,
+                    finger_workspace,
+                    object_surface_discretization)) {
+            continue;
+        }
+        //  Rewire the node.
+        T->remove_parent(nidx);
+        T->set_parent(nodeIdx, nidx);
+        update_node_cost(T, nidx, newCost); 
+    }
+
+    return;
+}
+
+int extend(
+        int near_idx,
+        double config_rand[7], 
+        double epsilon_translation,
+        double epsilon_angle,
+        int steps,
+        Tree* T,
+        double finger_workspace[NUM_FINGERS*6],
+        double* object_surface_discretization,
+        double rstar_radius=0)
+{
+    // TODO: extend function 
+    double* config_near = T->nodes[near_idx].config;
+    Vector3d x_near(config_near[0], config_near[1], config_near[2]); 
+    Quaterniond q_near(config_near[3], config_near[4], config_near[5], config_near[6]); 
+
+    Vector3d x_rand(config_rand[0], config_rand[1], config_rand[2]); 
+    Quaterniond q_rand(config_rand[3], config_rand[4], config_rand[5], config_rand[6]); 
+
+    // steer by epsilon
+    x_rand = steer_position(x_near, x_rand, epsilon_translation);
+    q_rand = steer_quaternion(q_near, q_rand, epsilon_angle);
+
+    int status = 0; // extend status: 0: trapped, 1:advanced, 2:reached
+
+    double config_new[7] = {0,0,0,0,0,0,0};
+    double t = 1/double(steps);
+
+    for(int i = 0; i < steps; i++){
+        Vector3d x_check = x_near + 0.1*(i+1)*(x_rand - x_near);
+        Quaterniond q_check = q_near.slerp(0.1*(i+1), q_rand);
+        double config_check[7];
+        to_config(config_check, x_check, q_check);
+
+        if(IsValidConfiguration(config_check, T->nodes[near_idx].finger_locations, finger_workspace, object_surface_discretization))
+        {
+            status = 1;//advanced
+            to_config(config_new, x_check, q_check);
+            if (dist(config_new, config_rand)<0.001) { status = 2; break; }//reached
+            
+        } else { 
+            break; }
+    }
+
+    if (status!=0){
+      Node node_new(config_new, T->nodes[near_idx].finger_locations);
+      T->add_node(&node_new, near_idx);    
+      T->nodes[T->nodes.size() - 1].cost = T->nodes[near_idx].cost
+                      + get_edge_cost(T, near_idx, T->nodes.size() - 1);
+      if (rstar_radius > 0) {
+          rewire_neighborhood(
+                  T->nodes.size() - 1,
+                  T,
+                  rstar_radius,
+                  steps,
+                  finger_workspace,
+                  object_surface_discretization);
+      }
+    }
+    return status;
+}
+
+int connect(int* near_idx, double config[7], double epsilon_translation,
+            double epsilon_angle, int steps, Tree* T,
+            double finger_workspace[NUM_FINGERS*6],
+            double* object_surface_discretization) 
+{
+    int code = 1;
+    while (code == 1) {
+        code = extend(*near_idx, config, epsilon_translation, epsilon_angle,
+                      steps, T, finger_workspace,
+                      object_surface_discretization);
+        if (code == 1) {
+            *near_idx = T->nodes.size() - 1;
+        }
+    }
+    return code;
+}
+
+
 int primitiveOne(float goToGoalRand, Tree* T, Vector3d pos_lb,
                  Vector3d pos_ub, Vector3d goal_position,
                  Quaterniond goal_orientation,
                  double finger_workspace[NUM_FINGERS*6],
-                 double* object_surface_discretization)
+                 double* object_surface_discretization,
+                 double rstar_radius=0)
 {
         // bias sample toward the goal
         Vector3d x_rand;
@@ -365,25 +490,39 @@ int primitiveOne(float goToGoalRand, Tree* T, Vector3d pos_lb,
         std::vector<int> nears;
         T->nearest_neighbors(config_rand, &nears);
         
-        //extend every node_near, do: linear interpolate
+        // extend every node_near, do: linear interpolate
         // and check constraints
         int numAdded = 0;
         int code;
-        for (int i = 0; i < nears.size(); i++) {
-            // extend function
-            code = extend(nears[i], config_rand, epsilon_translation,
-                          epsilon_angle, interpolation_steps,T,
-                          finger_workspace, object_surface_discretization);
-            if (code != 0) {
-                numAdded++;
+        int total_extends = nears.size();
+        if (total_extends > max_extends) { 
+            total_extends = max_extends;
+        }
+        for (int i = 0; i < total_extends; i++) {
+            if (T->nodes[nears[i]].children.size() <= children_max){
+                code = extend(nears[i], config_rand, epsilon_translation,
+                              epsilon_angle, interpolation_steps,T,
+                              finger_workspace, object_surface_discretization,
+                              rstar_radius);
+                if (code != 0) {
+                    numAdded++;
+                }
             }
         }
         return numAdded;
 }
 
 
-void primitiveTwo(int node_idx, Tree* T, double finger_workspace[NUM_FINGERS*6], double* object_surface_discretization) {
-    
+void primitiveTwo(
+        int node_idx,
+        Tree* T,
+        double finger_workspace[NUM_FINGERS*6],
+        double* object_surface_discretization,
+        int steps,
+        double rstar_radius=0) {
+    if (T->nodes[node_idx].children.size() > children_max) { 
+        return;
+    }
     Vector3d p(T->nodes[node_idx].config[0],T->nodes[node_idx].config[1],T->nodes[node_idx].config[2]);
     Quaterniond q(T->nodes[node_idx].config[3],T->nodes[node_idx].config[4],T->nodes[node_idx].config[5],T->nodes[node_idx].config[6]);
     std::vector<int> finger_to_relocate;
@@ -423,16 +562,35 @@ void primitiveTwo(int node_idx, Tree* T, double finger_workspace[NUM_FINGERS*6],
             Node new_node(T->nodes[node_idx].config, T->nodes[node_idx].finger_locations);
             new_node.finger_locations[finger_idx] = finger_location;
             T->add_node(&new_node, node_idx);
+            T->nodes[T->nodes.size() - 1].cost = T->nodes[node_idx].cost 
+                    + get_edge_cost(T, node_idx, T->nodes.size() - 1);
+            if (rstar_radius > 0) {
+                rewire_neighborhood(
+                        T->nodes.size() - 1,
+                        T,
+                        rstar_radius,
+                        interpolation_steps,
+                        finger_workspace,
+                        object_surface_discretization);
+            }
         }
 
     }
     return;
 }
 
-
-static void plannerRRT(double object_position_range[6], double finger_workspace[NUM_FINGERS*6], double* object_surface_discretization, 
-    double start_object_config[7], int start_finger_locations[NUM_FINGERS], double goal_object_config[7], 
-    double*** object_path, int*** finger_path, int* planlength, int* treesize){
+static void plannerRRT(
+        double object_position_range[6],
+        double finger_workspace[NUM_FINGERS*6],
+        double* object_surface_discretization, 
+        double start_object_config[7],
+        int start_finger_locations[NUM_FINGERS],
+        double goal_object_config[7], 
+        double*** object_path,
+        int*** finger_path,
+        int* planlength,
+        int* treesize,
+        double rstar_radius=0){
     
     //no plan by default
 	*object_path = NULL;
@@ -464,13 +622,22 @@ static void plannerRRT(double object_position_range[6], double finger_workspace[
         if (randd() < primitive1_prob){
             primitiveOne(randd(), &T, pos_lb, pos_ub, goal_position,
                          goal_orientation, finger_workspace,
-                         object_surface_discretization);
+                         object_surface_discretization, rstar_radius);
             // if dist to goal is smaller than some threshold, goal is found
             int near_idx = T.nearest_neighbor(goal_object_config);
             double dd = dist(T.nodes[near_idx].config, goal_object_config);
             if (dd <= goal_thr)
-            {
-                //printf("goal reached \n");
+            {    
+                // if (goal_idx == -1) {
+                //     printf("Found goal node in %d samples. Current plan cost: %f\n",
+                //            kk + 1, T.nodes[near_idx].cost);
+                // }  
+                // goal_idx = near_idx;
+                // if (rstar_radius <= 0) {
+                //     break;
+                // }
+                printf("Found goal node in %d samples. Current plan cost: %f\n",
+                    kk + 1, T.nodes[near_idx].cost);
                 goal_idx = near_idx;
                 break;
             }
@@ -490,7 +657,11 @@ static void plannerRRT(double object_position_range[6], double finger_workspace[
             } else {
                 node_idx = int(T.nodes.size()*randd());
             }
-            primitiveTwo(node_idx, &T, finger_workspace, object_surface_discretization);
+            primitiveTwo(node_idx, &T, finger_workspace,
+                    object_surface_discretization, rstar_radius);
+        }
+        if (kk % 100 == 0) {
+            std::cout << "Iteration: " << kk << " Nodes Expanded: " << T.nodes.size() << std::endl;
         }
     }
 
@@ -512,112 +683,7 @@ static void plannerRRT(double object_position_range[6], double finger_workspace[
         (*finger_path)[i] = T.nodes[node_path[l-i-1]].finger_locations;
     }  
     *treesize = T.nodes.size();
-
-    return;
-
-} 
-
-
-static void plannerRRTCONNECT(double object_position_range[6], double finger_workspace[NUM_FINGERS*6], double* object_surface_discretization, 
-    double start_object_config[7], int start_finger_locations[NUM_FINGERS], double goal_object_config[7], 
-    double*** object_path, int*** finger_path, int* planlength, int* treesize){
-    
-    //no plan by default
-	*object_path = NULL;
-    *finger_path = NULL;
-	*planlength = 0;
-    
-
-    Vector3d pos_lb(object_position_range[0], object_position_range[1], object_position_range[2]);
-    Vector3d pos_ub(object_position_range[3], object_position_range[4], object_position_range[5]);
-
-    Vector3d start_position(start_object_config[0],start_object_config[1], start_object_config[2]);
-    Quaterniond start_orientation(start_object_config[3], start_object_config[4], start_object_config[5], start_object_config[6]);
-
-    Vector3d goal_position(goal_object_config[0],goal_object_config[1], goal_object_config[2]);
-    Quaterniond goal_orientation(goal_object_config[3], goal_object_config[4], goal_object_config[5], goal_object_config[6]);
-
-    set_rand_seed(); //set random seed by cuurent time
-    
-    // initialize the tree, create start node
-    Node start_node(start_object_config, start_finger_locations);
-    // TODO: Right now set goal for fingers to be same as start location,
-    // but we should think about how to handle this better in the future.
-    Node goal_node(goal_object_config, start_finger_locations);
-    Tree startTree, goalTree, T1, T2;
-    startTree.initial_node(&start_node); 
-    goalTree.initial_node(&goal_node);
-    bool extendStartTree = 1;
-    int numAdded, code, nearestIdx, nidx;
-    double* config;
-
-
-    //search
-    for (int kk = 0; kk < max_samples; kk++){
-        if (extendStartTree) {
-            T1 = startTree;
-            T2 = goalTree;
-        } else {
-            T1 = goalTree;
-            T2 = startTree;
-        }
-        // random sample which primitive to choose
-        if (randd() < primitive1_prob) {
-            numAdded = primitiveOne(randd(), &T1, pos_lb, pos_ub,
-                                    goal_position, goal_orientation,
-                                    finger_workspace,
-                                    object_surface_discretization);
-            // Since we may have added multiple multiple nodes, try to
-            // connect all of them.
-            if (numAdded > 0) {
-                for (nidx = T1.nodes.size() - numAdded;
-                        nidx < T1.nodes.size(); nidx++) {
-                    config = T1.nodes[nidx].config;
-                    nearestIdx = T2.nearest_neighbor(config) ;
-                    code = connect(&nearestIdx, config, epsilon_translation,
-                                   epsilon_angle, interpolation_steps, &T2, 
-                                   finger_workspace,
-                                   object_surface_discretization);
-                    if (code == 2) {
-                        // Able to connect the trees, build the plan.
-                        std::vector<int> startPath, goalPath;
-                        if (extendStartTree) {
-                            T1.backtrack(nidx, &startPath);
-                            T2.backtrack(nearestIdx, &goalPath);
-                        } else {
-                            T1.backtrack(nidx, &goalPath);
-                            T2.backtrack(nearestIdx, &startPath);
-                        }
-                        int l = startPath.size() + goalPath.size();
-                        *planlength = l;
-                        *object_path = (double**) malloc(l*sizeof(double*));
-                        *finger_path = (int**) malloc(l*sizeof(int*));
-                        for (int i = 0; i < startPath.size(); i++) {
-                            int idx = startPath.size() - i - 1;
-                            (*object_path)[i] = 
-                                startTree.nodes[startPath[idx]].config;
-                            (*finger_path)[i] =
-                                startTree.nodes[startPath[idx]].finger_locations;
-                        }
-                        for (int i = startPath.size(); i < l; i++) {
-                            int idx = i - startPath.size();
-                            (*object_path)[i] = 
-                                goalTree.nodes[goalPath[idx]].config;
-                            (*finger_path)[i] =
-                                goalTree.nodes[goalPath[idx]].finger_locations;
-                        }
-                        *treesize = startTree.nodes.size()
-                                    + goalTree.nodes.size();
-                        return;
-                    }
-                }
-            }
-            extendStartTree = ~extendStartTree;
-        } else {
-            //TODO PRIMITIVE 2
-            continue;
-        }
-    }
+    std::cout << "Plan cost: " << T.nodes[goal_idx].cost << std::endl;
     return;
 } 
 
@@ -628,12 +694,16 @@ void mexFunction( int nlhs, mxArray *plhs[],
 { 
     
     /* Check for proper number of arguments */    
-    if (nrhs != 8 && nrhs!=7) { 
+    double rrtstar_radius = 0;
+    if (nrhs < 7 || nrhs > 9) {
 	    mexErrMsgIdAndTxt( "MATLAB:planner:invalidNumInputs",
-                "Incorrect number of input arguments (7 or 8)."); 
+                "Incorrect number of input arguments (7 or 8 or 9)."); 
     } 
-    if (nrhs == 8){
+    if (nrhs >= 8){
         max_samples = (int)*mxGetPr(MAX_SAMPLES);
+    }
+    if (nrhs >= 9) {
+        rrtstar_radius = (double)*mxGetPr(RRTSTAR_RADIUS);
     }
 
     double* object_range = mxGetPr(POSRANGE_IN);      
@@ -656,18 +726,10 @@ void mexFunction( int nlhs, mxArray *plhs[],
     int treesize = 0;
     
     //you can may be call the corresponding planner function here
-    if (planner_id == RRT)
-    {
+    if (planner_id == RRT) {
       plannerRRT(object_range, finger_workspace, surface, start_object_config, start_finger, goal_object_config, 
-        &object_path, &finger_path, &planlength, &treesize);
-    } else if (planner_id == RRTCONNECT) {
-        plannerRRTCONNECT(object_range, finger_workspace, surface,
-                          start_object_config, start_finger,
-                          goal_object_config, &object_path, &finger_path,
-                          &planlength, &treesize);
-    }
-    else
-    {
+        &object_path, &finger_path, &planlength, &treesize, rrtstar_radius);
+    } else {
         mexErrMsgIdAndTxt( "MATLAB:planner:invalidID",
         "Planner ID can only be 0."); 
     }

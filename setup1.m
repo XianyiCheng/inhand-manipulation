@@ -36,5 +36,7 @@ start_finger = [23, 54, 43, 7];
 start_obj = [0,0,0,1,0,0,0];
 goal_obj = [0,0,0,0,1,0,0];
 plannerid = 0;
+rrtstar_radius = 1.0;
 
-max_samples = 1000;
+max_samples = 500;
+

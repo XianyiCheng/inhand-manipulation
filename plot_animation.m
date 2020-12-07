@@ -38,7 +38,7 @@ for i = 1:n
         hold on;
         h = [h,hj];
     end
-    pause(1);
+    pause(0.5);
     if i ~= n
         for k = 1:numel(h)
             delete(h(k));

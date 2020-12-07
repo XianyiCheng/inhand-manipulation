@@ -30,4 +30,6 @@ public:
   void neighborhood(int node_idx, double radius, std::vector<int>* neighbors);
   void add_node(Node* n, int parent);
   void initial_node(Node* n);
+  void remove_parent(int node_idx);
+  void set_parent(int parent, int child);
 };

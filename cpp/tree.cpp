@@ -106,3 +106,21 @@ void Tree::add_node(Node* n, int parent_idx)
     nodes.push_back(*n);
     return;
 }
+
+void Tree::remove_parent(int node_idx) {
+    int parent_idx = nodes[node_idx].parent;
+    for (std::vector<int>::iterator it = nodes[parent_idx].children.begin();
+            it != nodes[parent_idx].children.end(); ++it) {
+        if (node_idx == *it) {
+            nodes[parent_idx].children.erase(it);
+            break;
+        }
+    }
+    nodes[node_idx].parent = -1;
+    return;
+}
+
+void Tree::set_parent(int parent, int child) {
+    nodes[parent].children.push_back(child);
+    nodes[child].parent = parent;
+}
