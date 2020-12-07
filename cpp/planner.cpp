@@ -43,7 +43,7 @@ int max_samples = 1000;
 int max_extends = 1000;
 int children_max = 1000;
 // TODO: Can remove this once we have better costs.
-double finger_cost_coef = 1 / (2 * NUM_FINGERS);
+double finger_cost_coef = 1.0; // / (0.5 * NUM_FINGERS);
 
 
 void to_config(double config[7], Vector3d p, Quaterniond q){
@@ -310,11 +310,49 @@ void rewire_neighborhood(
         int steps,
         double finger_workspace[NUM_FINGERS*6],
         double* object_surface_discretization) {
+
     double nodeCost = T->nodes[nodeIdx].cost;
     // Get the neeighbors around the node in question.
     std::vector<int> neighbors;
     T->neighborhood(nodeIdx, radius, &neighbors);
+    
     // For each of the neighbors...
+
+    // nidx as parent
+    for (int nidx : neighbors) {
+        if (nidx!=0){
+            T->nodes[nidx].cost = T->nodes[T->nodes[nidx].parent].cost + get_edge_cost(T, T->nodes[nidx].parent, nidx);
+        }
+
+        //  Check to see if having this as a parent would be a better cost.
+        double newCost = T->nodes[nidx].cost + get_edge_cost(T, nidx, nodeIdx);
+        if (nodeCost <= newCost) {
+            continue;
+        }
+        // Check to make sure we wouldn't be making any cycles in the graph.
+        for (int nchild : T->nodes[nidx].children) {
+            if (nchild == nodeIdx) { 
+                continue;
+            }
+        }
+        //  Check to see if these two nodes can be connected.
+        if (!is_free_to_connect(
+                    nidx,
+                    nodeIdx,
+                    steps,
+                    T,
+                    finger_workspace,
+                    object_surface_discretization)) {
+            continue;
+        }
+        //  Rewire the node.
+        T->remove_parent(nodeIdx);
+        T->set_parent(nidx, nodeIdx);
+        update_node_cost(T, nodeIdx, newCost); 
+    }
+
+    // nodeIdx as parent
+    nodeCost = T->nodes[nodeIdx].cost;
     for (int nidx : neighbors) {
         //  Check to see if having this as a parent would be a better cost.
         double newCost = nodeCost + get_edge_cost(T, nodeIdx, nidx);
@@ -342,6 +380,7 @@ void rewire_neighborhood(
         T->set_parent(nodeIdx, nidx);
         update_node_cost(T, nidx, newCost); 
     }
+
     return;
 }
 
@@ -589,14 +628,18 @@ static void plannerRRT(
             double dd = dist(T.nodes[near_idx].config, goal_object_config);
             if (dd <= goal_thr)
             {    
-                if (goal_idx == -1) {
-                    printf("Found goal node in %d samples. Current plan cost: %f\n",
-                           kk + 1, T.nodes[near_idx].cost);
-                }  
+                // if (goal_idx == -1) {
+                //     printf("Found goal node in %d samples. Current plan cost: %f\n",
+                //            kk + 1, T.nodes[near_idx].cost);
+                // }  
+                // goal_idx = near_idx;
+                // if (rstar_radius <= 0) {
+                //     break;
+                // }
+                printf("Found goal node in %d samples. Current plan cost: %f\n",
+                    kk + 1, T.nodes[near_idx].cost);
                 goal_idx = near_idx;
-                if (rstar_radius <= 0) {
-                    break;
-                }
+                break;
             }
 
         } else {
