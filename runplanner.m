@@ -8,4 +8,5 @@ surface_T = surface';
     planner(posrange, workspace_T(:) ,surface_T(:), start_obj, start_finger, goal_obj, plannerid,max_samples,rrtstar_radius);
 
 object_path(1,:) = start_obj;
-%plot_animation(HL, HW, HH, workspace, surface, object_path, finger_path);
+%%
+plot_animation(HL, HW, HH, workspace, surface, object_path, finger_path);

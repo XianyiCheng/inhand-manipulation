@@ -14,9 +14,13 @@ Matrix6d contact_jacobian(const Vector3d &position, const Vector3d &normal){
         AngleAxisd aaxis(rotangle, rotvec);
         R = aaxis.toRotationMatrix();
     }
-    Matrix4d T = Matrix4d::Identity();
-    T.block<3, 3>(0, 0) = R;
-    T.block<3, 1>(0, 3) = position;
-    Matrix6d Adgco = SE32Adj(T);
+    // Matrix4d T = Matrix4d::Identity();
+    // T.block<3, 3>(0, 0) = R;
+    // T.block<3, 1>(0, 3) = position;
+    // Matrix6d Adgoc = SE32Adj(T);
+    Matrix4d T_inv = Matrix4d::Identity();
+    T_inv.block<3, 3>(0, 0) = R.transpose();
+    T_inv.block<3, 1>(0, 3) = -R.transpose()*position;
+    Matrix6d Adgco = SE32Adj(T_inv);
     return Adgco;
 }

@@ -1,6 +1,6 @@
 function plot_animation(HL, HW, HH, workspace, surface, object_path, finger_path)
 figure;
-%waitforbuttonpress;
+waitforbuttonpress;
 n_fingers = size(workspace,1)/2;
 R = eye(3);
 for i = 1:n_fingers
