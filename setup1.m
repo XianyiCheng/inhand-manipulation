@@ -34,9 +34,11 @@ end
 start_finger = [23, 54, 43, 7];
 
 start_obj = [0,0,0,1,0,0,0];
-goal_obj = [0,0,0,rotm2quat(eul2rotm([0,pi,0])*eul2rotm([0,0,pi]))];%[0,0,0,0,1,0,0];
+%goal_obj = [0,0,0,rotm2quat(eul2rotm([0,pi,0])*eul2rotm([0,0,pi]))];
+%goal_obj = [0,0,0,0,1,0,0];
+goal_obj = [0,0,0,rotm2quat(eul2rotm([-pi/3,0,0])*eul2rotm([0,pi/2,0])*eul2rotm([0,0,pi/4]))];
 plannerid = 0;
-rrtstar_radius = 1.0;
+rrtstar_radius = 1.5;
 
 max_samples = 500;
 

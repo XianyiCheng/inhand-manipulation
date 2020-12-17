@@ -290,6 +290,17 @@ double get_edge_cost(Tree* T, int node1, int node2) {
     return cost;
 }
 
+double get_finger_change_number(const Tree& T, int node1, int node2) {
+    // TODO: Update this function when we have a different cost function.
+    int cost = 0;
+    for (int f_idx = 0; f_idx < NUM_FINGERS; f_idx++) {
+        if (T.nodes[node1].finger_locations[f_idx] != T.nodes[node2].finger_locations[f_idx]) {
+            cost += 1;
+        }
+    }
+    return cost;
+}
+
 void update_node_cost(
         Tree* T,
         int nodeIdx,
@@ -579,6 +590,75 @@ void primitiveTwo(
     return;
 }
 
+void generate_trajectory(Tree& T, const std::vector<int>& node_path, std::vector<Node>* node_traj,
+    double finger_workspace[NUM_FINGERS*6], double* object_surface_discretization){
+    
+    int l = node_path.size();
+    node_traj->push_back(T.nodes[node_path[l-1]]);
+
+    for (int kk=1; kk< l; kk++){
+
+        int idx = node_path[l-kk-1];
+        int pre_idx = node_path[l-kk];
+        double d = dist(T.nodes[idx].config, T.nodes[pre_idx].config);
+        int change = get_finger_change_number(T, idx, pre_idx);
+
+        if (d!=0 && change>1){
+
+            std::vector<int> f_idx;
+            int finger_change_count = 0;
+            int finger_loc[NUM_FINGERS];
+
+            for (int i = 0; i < NUM_FINGERS; i++){
+                finger_loc[i] = T.nodes[pre_idx].finger_locations[i];
+
+                if (T.nodes[pre_idx].finger_locations[i]!=T.nodes[idx].finger_locations[i])
+                {
+                    f_idx.push_back(i);
+                }
+            }
+
+            double* config_near = T.nodes[pre_idx].config;
+            Vector3d x_near(config_near[0], config_near[1], config_near[2]); 
+            Quaterniond q_near(config_near[3], config_near[4], config_near[5], config_near[6]); 
+
+            double* config_rand = T.nodes[idx].config;
+            Vector3d x_rand(config_rand[0], config_rand[1], config_rand[2]); 
+            Quaterniond q_rand(config_rand[3], config_rand[4], config_rand[5], config_rand[6]); 
+
+            double t = 1/double(interpolation_steps);
+
+            for(int i = 0; i < interpolation_steps; i++){
+                Vector3d x_check = x_near + 0.1*(i+1)*(x_rand - x_near);
+                Quaterniond q_check = q_near.slerp(0.1*(i+1), q_rand);
+                double config_check[7];
+                to_config(config_check, x_check, q_check);
+
+                // try to change finger contact
+                for (int j = 0; j < f_idx.size(); j++){
+                    int k = f_idx[j];
+                    int pre_loc = finger_loc[k]; 
+                    finger_loc[k] = OUT_OF_INDEX;
+                    // check is in workspace && is force closure
+                    int loc = T.nodes[idx].finger_locations[k];
+                    if (in_fingertip_workspace(x_check, q_check, loc, k, finger_workspace, object_surface_discretization)
+                        && force_closure(x_check, q_check, finger_loc, object_surface_discretization)) {
+                        finger_loc[k] = loc;
+                        f_idx.erase(f_idx.begin() + j);
+                        Node node(config_check, finger_loc);
+                        node_traj->push_back(node);
+                    } else {
+                        finger_loc[k] = pre_loc;
+                    }
+                }
+
+            }
+        }
+        Node node(T.nodes[idx].config, T.nodes[idx].finger_locations);
+        node_traj->push_back(node);
+    }  
+}
+
 static void plannerRRT(
         double object_position_range[6],
         double finger_workspace[NUM_FINGERS*6],
@@ -674,14 +754,28 @@ static void plannerRRT(
 
     std::vector<int> node_path;
     T.backtrack(goal_idx, &node_path);
-    int l = node_path.size();
-    *planlength = l;
-    *object_path = (double**) malloc(l*sizeof(double*));
-    *finger_path = (int**) malloc(l*sizeof(int*));
-    for (int i=0; i< l; i++){
-        (*object_path)[i] = T.nodes[node_path[l-i-1]].config;
-        (*finger_path)[i] = T.nodes[node_path[l-i-1]].finger_locations;
+
+    // int l = node_path.size();
+    // *planlength = l;
+    // *object_path = (double**) malloc(l*sizeof(double*));
+    // *finger_path = (int**) malloc(l*sizeof(int*));
+    // for (int i=0; i< l; i++){
+    //     (*object_path)[i] = T.nodes[node_path[l-i-1]].config;
+    //     (*finger_path)[i] = T.nodes[node_path[l-i-1]].finger_locations;
+    // }  
+
+    std::vector<Node> node_traj;
+    generate_trajectory(T, node_path, &node_traj, finger_workspace, object_surface_discretization);
+
+    int k = node_traj.size();
+    *planlength = k;
+    *object_path = (double**) malloc(k*sizeof(double*));
+    *finger_path = (int**) malloc(k*sizeof(int*));
+    for (int i=0; i< k; i++){
+        (*object_path)[i] = node_traj[i].config;
+        (*finger_path)[i] = node_traj[i].finger_locations;
     }  
+
     *treesize = T.nodes.size();
     std::cout << "Plan cost: " << T.nodes[goal_idx].cost << std::endl;
     return;
