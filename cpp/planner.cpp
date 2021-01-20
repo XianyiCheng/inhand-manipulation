@@ -681,9 +681,6 @@ static void plannerRRT(
     Vector3d pos_lb(object_position_range[0], object_position_range[1], object_position_range[2]);
     Vector3d pos_ub(object_position_range[3], object_position_range[4], object_position_range[5]);
 
-    Vector3d start_position(start_object_config[0],start_object_config[1], start_object_config[2]);
-    Quaterniond start_orientation(start_object_config[3], start_object_config[4], start_object_config[5], start_object_config[6]);
-
     Vector3d goal_position(goal_object_config[0],goal_object_config[1], goal_object_config[2]);
     Quaterniond goal_orientation(goal_object_config[3], goal_object_config[4], goal_object_config[5], goal_object_config[6]);
 

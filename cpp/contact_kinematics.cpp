@@ -1,4 +1,5 @@
 #include"contact_kinematics.h"
+#include <math.h>
 
 Matrix6d contact_jacobian(const Vector3d &position, const Vector3d &normal){
     Vector3d z(0,0,1);
@@ -7,6 +8,8 @@ Matrix6d contact_jacobian(const Vector3d &position, const Vector3d &normal){
 
     if (rotvec.norm() < 1e-6){    
         R.setIdentity();
+    } else if ((rotvec.norm() < 1e-6) && (signbit(z[2]) != signbit(normal[2]))){
+        R << -1,0,0,0,1,0,0,0,-1;
     }
     else{
         rotvec = rotvec*(1/rotvec.norm());
