@@ -30,11 +30,17 @@ In the linux terminal, try to
 sudo ln -s /usr/lib/x86_64-linux-gnu/libstdc++.so.6  /usr/local/MATLAB/R2020b/bin/glnxa64/../../sys/os/glnxa64/libstdc++.so.6
 ```
 
-Every time you start MATLAB, you should do 
+To run always start MATLAB with OpenGL, Type the following at the MATLAB command prompt: 
+```
+opengl('save','software')
+```
+
+Otherwise every time you start MATLAB, you do 
 
 ```
 matlab -softwareopengl
 ```
+
 
 
 
