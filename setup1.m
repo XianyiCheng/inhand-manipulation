@@ -40,5 +40,5 @@ goal_obj = [0,0,0,0,1,0,0];
 plannerid = 0;
 rrtstar_radius = 1.5;
 
-max_samples = 500;
+max_samples = 1000;
 
