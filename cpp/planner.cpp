@@ -127,6 +127,8 @@ bool force_closure(Vector3d p, Quaterniond q, int finger_locations[NUM_FINGERS],
     for(int i=0; i<w_c.cols(); i++){
         T.col(i) = w_c.col(i) - avg_w_c;
     }
+
+    // TODO: need to check that T is full rank
     
     // set up LP
     VectorXd C = -T_0;
@@ -146,8 +148,14 @@ bool force_closure(Vector3d p, Quaterniond q, int finger_locations[NUM_FINGERS],
     double optimal_cost;
 
     bool result = lp(C, A, b, Ae, be, xl, xu, &xs, &optimal_cost);
+
+    if (-optimal_cost <= 1){
+        return true;
+    } else {
+        return false;
+    }
     
-    return result;
+    // return result;
 }
 
 
